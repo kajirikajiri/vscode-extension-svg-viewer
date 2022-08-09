@@ -23,12 +23,6 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage(JSON.stringify(a));
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('svg-viewer.helloWorld2', async() => {
-		const panel = vscode.window.createWebviewPanel(
-			'catCodint',
-			'Cat Coding',
-			vscode.ViewColumn.One,
-			{}
-		)
 		const getJson = async() => {
 			const folders = vscode.workspace.workspaceFolders;
 			if (!folders) {
@@ -44,8 +38,8 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			const readStr = Buffer.from(readData).toString('utf8');
 			const json: {[x:string]: {
-				x: number,
-				y: number,
+				left: number,
+				top: number,
 				width: number,
 				height: number,
 				path: string,
@@ -53,6 +47,14 @@ export function activate(context: vscode.ExtensionContext) {
 			return json
 		}
 		
+		const panel = vscode.window.createWebviewPanel(
+			'catCodint',
+			'Cat Coding',
+			vscode.ViewColumn.One,
+			{
+				enableScripts: true
+			}
+		)
 		panel.webview.onDidReceiveMessage(async(message) => {
 			if (message.type === 'drag.end' || message.type === 'resize.end') {
 				const json = await getJson()
@@ -67,66 +69,73 @@ export function activate(context: vscode.ExtensionContext) {
 				await vscode.workspace.fs.writeFile(fileUri, writeData);
 				return
 			}
+			if (message.type === 'window.onload') {
+				const json = await getJson()
+				panel.webview.postMessage({
+					type: "window.onload.response",
+					json,
+				})
+				return 
+			}
 		}, undefined, context.subscriptions)
 		
-		const json = await getJson()
-		const c = await vscode.workspace.findFiles('**/*.*', '**/node_modules/**')
-		const f = c.map(d => {
-			if (!d.path.endsWith(".svg")) return
+		const fileUris = await vscode.workspace.findFiles('**/*.*', '**/node_modules/**')
+		const svgList = fileUris.map(fileUri => {
+			if (!fileUri.path.endsWith(".svg")) return
 
-			const e =  vscode.Uri.file(d.path)
-			const f = panel.webview.asWebviewUri(e)
-			console.log(f)
-			const top = `${json[f.path].y}`
-			const left = `${json[f.path].x}`
-			console.log(top, left)
-			return `<div data-path="${f.path}" class="resize-drag" style="top: ${top}px;left: ${left}px;"><img src="${f}"/></div>`
-		}).filter(a => a !== undefined)
-		// const a = vscode.Uri.file(
-		// 	path.join(context.extensionPath, 'example.png')
-		// 	// path.join("/Users/kajiri/Downloads/sika.jpg")
-		//   );
-		// const b = panel.webview.asWebviewUri(a)
-		// vscode.window.showInformationMessage(JSON.stringify({...b, ...{hey: context.extensionPath}}));
-		panel.webview.options = {
-			enableScripts: true,
-		};
-		panel.webview.html = f.join('') + `
+			const webViewUri = panel.webview.asWebviewUri(vscode.Uri.file(fileUri.path))
+			return `<div data-path="${webViewUri.path}" class="resize-drag"><img src="${webViewUri}"/></div>`
+		}).filter((a): a is string => a !== undefined)
+
+		panel.webview.html = svgList.join('') + `
 		<script src="https://cdn.jsdelivr.net/npm/interactjs/dist/interact.min.js"></script>
 		<script>
-		window.onload = function () {
-			console.log("loaded")
-			// 毎回ロード時にファイルからサイズと位置を読み込む
+		window.addEventListener('message', (event) => {
+            const message = event.data; // The JSON data our extension sent
 
+            switch (message.type) {
+                case 'window.onload.response':
+					const json = message.json;
+					document.querySelectorAll('.resize-drag').forEach(function (e) {
+						const rect = json[e.dataset.path]
+						e.style.width = (rect?.width ?? 150) + 'px'
+						e.style.height = (rect?.height ?? 150) + 'px'
+						e.style.top = (rect?.top ?? 0) + 'px'
+						e.style.left = (rect?.left ?? 0) + 'px'
+						e.style.border = '1px dashed red'
+						e.style.display = 'block'
+					})
+                    break;
+            }
+        });	
+
+		window.onload = function () {
 			const vscode = acquireVsCodeApi();
-			function dragMoveListener (event) {
-				var target = event.target
-				// keep the dragged position in the data-x/data-y attributes
-				var x = (parseFloat(target.getAttribute('data-x')) || 0) + event.dx
-				var y = (parseFloat(target.getAttribute('data-y')) || 0) + event.dy
-			  
-				// translate the element
-				target.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
-			  
-				// update the posiion attributes
-				target.setAttribute('data-x', x)
-				target.setAttribute('data-y', y)
-			  }
-			  
-			  // this function is used later in the resizing and gesture demos
-			  window.dragMoveListener = dragMoveListener
-			
+			vscode.postMessage({
+				type: 'window.onload'
+			})
+
 			interact('.resize-drag')
 			.draggable({
 				listeners: {
-					move: window.dragMoveListener,
+					move(event) {
+						var target = event.target
+						// keep the dragged position in the data-x/data-y attributes
+						var x = (parseFloat(target.getAttribute('data-x')) || 0) + event.dx
+						var y = (parseFloat(target.getAttribute('data-y')) || 0) + event.dy
+					  
+						// translate the element
+						target.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
+					  
+						// update the posiion attributes
+						target.setAttribute('data-x', x)
+						target.setAttribute('data-y', y)
+					},
 					end (event) {
-						var x = (parseFloat(event.target.getAttribute('data-x')) || 0)
-						var y = (parseFloat(event.target.getAttribute('data-y')) || 0)
 						vscode.postMessage({
 							type: 'drag.end',
-							x,
-							y,
+							left: event.rect.left,
+							top: event.rect.top,
 							width: event.rect.width,
 							height: event.rect.height,
 							path: event.target.getAttribute('data-path'),
@@ -146,18 +155,6 @@ export function activate(context: vscode.ExtensionContext) {
 			  edges: { left: true, right: true, bottom: true, top: true },
 		  
 			  listeners: {
-				end (event) {
-					var x = (parseFloat(event.target.getAttribute('data-x')) || 0)
-					var y = (parseFloat(event.target.getAttribute('data-y')) || 0)
-					vscode.postMessage({
-						type: 'drag.end',
-						x,
-						y,
-						width: event.rect.width,
-						height: event.rect.height,
-						path: event.target.getAttribute('data-path'),
-					})
-				},
 				move (event) {
 				  var target = event.target
 				  var x = (parseFloat(target.getAttribute('data-x')) || 0)
@@ -175,8 +172,17 @@ export function activate(context: vscode.ExtensionContext) {
 		  
 				  target.setAttribute('data-x', x)
 				  target.setAttribute('data-y', y)
-				//   target.textContent = Math.round(event.rect.width) + '\u00D7' + Math.round(event.rect.height)
-				}
+				},
+				end (event) {
+					vscode.postMessage({
+						type: 'drag.end',
+						left: event.rect.left,
+						top: event.rect.top,
+						width: event.rect.width,
+						height: event.rect.height,
+						path: event.target.getAttribute('data-path'),
+					})
+				},
 			  },
 			  modifiers: [
 				// keep the edges inside the parent
@@ -219,9 +225,9 @@ export function activate(context: vscode.ExtensionContext) {
 			// color: white;
 			font-size: 20px;
 			font-family: sans-serif;
-		  
+			
 			touch-action: none;
-			border: 1px dashed red;
+			display: none;
 				
 			/* This makes things *much* easier */
 			box-sizing: border-box;
