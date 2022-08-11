@@ -80,56 +80,124 @@ export function activate(context: vscode.ExtensionContext) {
 		}, undefined, context.subscriptions)
 		
 		const fileUris = await vscode.workspace.findFiles('**/*.*', '**/node_modules/**')
-		const svgList = fileUris.map(fileUri => {
+		const files = fileUris.map(fileUri => {
 			if (!fileUri.path.endsWith(".svg")) return
 
 			const webViewUri = panel.webview.asWebviewUri(vscode.Uri.file(fileUri.path))
-			return `<div data-path="${webViewUri.path}" class="resize-drag"><img src="${webViewUri}"/></div>`
-		}).filter((a): a is string => a !== undefined)
+			// return `<div data-path="${webViewUri.path}" class="resize-drag"><img src="${webViewUri}"/></div>`
+			return {
+				webViewUriString: webViewUri.toString(),
+				webViewUri,
+			}
+		}).filter((a): a is {
+			webViewUriString: string;
+			webViewUri: vscode.Uri;
+		} => a !== undefined)
+		// https://file%2B.vscode-resource.vscode-cdn.net/Users/kajiri/Documents/logo.svg
 
-		panel.webview.html = svgList.join('') + `
+		panel.webview.html = `
+		<!-- Load React. -->
+		<!-- Note: when deploying, replace "development.js" with "production.min.js". -->
+		<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+		<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+
+		<!-- Load interactjs. -->
 		<script src="https://cdn.jsdelivr.net/npm/interactjs/dist/interact.min.js"></script>
+	  
+		<div id="root"></div>
+
+		<!-- Load our React component. -->
 		<script>
-		window.addEventListener('message', (event) => {
-            const message = event.data; // The JSON data our extension sent
+		'use strict';
 
-            switch (message.type) {
-                case 'window.onload.response':
-					const json = message.json;
-					document.querySelectorAll('.resize-drag').forEach(function (e) {
-						const rect = json[e.dataset.path]
-						e.style.width = (rect?.width ?? 150) + 'px'
-						e.style.height = (rect?.height ?? 150) + 'px'
-						e.style.top = (rect?.top ?? 0) + 'px'
-						e.style.left = (rect?.left ?? 0) + 'px'
-						e.style.border = '1px dashed red'
-						e.style.display = 'block'
-					})
-                    break;
-            }
-        });	
+		const e = React.createElement;
+		
+		const Outer =() => {
+			const [count, setCount] = React.useState(0);
+			const [files, setFiles] = React.useState(${JSON.stringify(files)});
+			console.log(files)
+			React.useEffect(() => {
+				window.addEventListener('message', (event) => {
+					const message = event.data; // The JSON data our extension sent
+		
+					switch (message.type) {
+						case 'window.onload.response':
+							const json = message.json;
+							document.querySelectorAll('.resize-drag').forEach(function (e) {
+								const rect = json[e.dataset.path]
+								e.style.width = (rect?.width ?? 150) + 'px'
+								e.style.height = (rect?.height ?? 150) + 'px'
+								e.style.top = (rect?.top ?? 100) + 'px'
+								e.style.left = (rect?.left ?? 100) + 'px'
+								e.style.border = '1px dashed red'
+								e.style.display = 'block'
+							})
+							break;
+					}
+				});	
 
-		window.onload = function () {
-			const vscode = acquireVsCodeApi();
-			vscode.postMessage({
-				type: 'window.onload'
-			})
-
-			interact('.resize-drag')
-			.draggable({
-				listeners: {
-					move(event) {
-						var target = event.target
-						// keep the dragged position in the data-x/data-y attributes
-						var x = (parseFloat(target.getAttribute('data-x')) || 0) + event.dx
-						var y = (parseFloat(target.getAttribute('data-y')) || 0) + event.dy
-					  
-						// translate the element
-						target.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
-					  
-						// update the posiion attributes
-						target.setAttribute('data-x', x)
-						target.setAttribute('data-y', y)
+				const vscode = acquireVsCodeApi();
+				vscode.postMessage({
+					type: 'window.onload'
+				})
+	
+				interact('.resize-drag')
+				.draggable({
+					listeners: {
+						move(event) {
+							var target = event.target
+							// keep the dragged position in the data-x/data-y attributes
+							var x = (parseFloat(target.getAttribute('data-x')) || 0) + event.dx
+							var y = (parseFloat(target.getAttribute('data-y')) || 0) + event.dy
+						  
+							// translate the element
+							target.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
+						  
+							// update the posiion attributes
+							target.setAttribute('data-x', x)
+							target.setAttribute('data-y', y)
+						},
+						end (event) {
+							vscode.postMessage({
+								type: 'drag.end',
+								left: event.rect.left,
+								top: event.rect.top,
+								width: event.rect.width,
+								height: event.rect.height,
+								path: event.target.getAttribute('data-path'),
+							})
+						},
+					},
+					inertia: true,
+					modifiers: [
+					  interact.modifiers.restrictRect({
+						// restriction: 'parent',
+						endOnly: true
+					  })
+					]
+				  })
+				.resizable({
+				  // resize from all edges and corners
+				  edges: { left: true, right: true, bottom: true, top: true },
+			  
+				  listeners: {
+					move (event) {
+					  var target = event.target
+					  var x = (parseFloat(target.getAttribute('data-x')) || 0)
+					  var y = (parseFloat(target.getAttribute('data-y')) || 0)
+			  
+					  // update the element's style
+					  target.style.width = event.rect.width + 'px'
+					  target.style.height = event.rect.height + 'px'
+			  
+					  // translate when resizing from top or left edges
+					  x += event.deltaRect.left
+					  y += event.deltaRect.top
+			  
+					  target.style.transform = 'translate(' + x + 'px,' + y + 'px)'
+			  
+					  target.setAttribute('data-x', x)
+					  target.setAttribute('data-y', y)
 					},
 					end (event) {
 						vscode.postMessage({
@@ -141,65 +209,72 @@ export function activate(context: vscode.ExtensionContext) {
 							path: event.target.getAttribute('data-path'),
 						})
 					},
-				},
-				inertia: true,
-				modifiers: [
-				  interact.modifiers.restrictRect({
-					// restriction: 'parent',
-					endOnly: true
-				  })
-				]
-			  })
-			.resizable({
-			  // resize from all edges and corners
-			  edges: { left: true, right: true, bottom: true, top: true },
-		  
-			  listeners: {
-				move (event) {
-				  var target = event.target
-				  var x = (parseFloat(target.getAttribute('data-x')) || 0)
-				  var y = (parseFloat(target.getAttribute('data-y')) || 0)
-		  
-				  // update the element's style
-				  target.style.width = event.rect.width + 'px'
-				  target.style.height = event.rect.height + 'px'
-		  
-				  // translate when resizing from top or left edges
-				  x += event.deltaRect.left
-				  y += event.deltaRect.top
-		  
-				  target.style.transform = 'translate(' + x + 'px,' + y + 'px)'
-		  
-				  target.setAttribute('data-x', x)
-				  target.setAttribute('data-y', y)
-				},
-				end (event) {
-					vscode.postMessage({
-						type: 'drag.end',
-						left: event.rect.left,
-						top: event.rect.top,
-						width: event.rect.width,
-						height: event.rect.height,
-						path: event.target.getAttribute('data-path'),
+				  },
+				  modifiers: [
+					// keep the edges inside the parent
+					interact.modifiers.restrictEdges({
+					  outer: 'parent'
+					}),
+			  
+					// minimum size
+					interact.modifiers.restrictSize({
+					  min: { width: 50, height: 50 }
 					})
-				},
-			  },
-			  modifiers: [
-				// keep the edges inside the parent
-				interact.modifiers.restrictEdges({
-				  outer: 'parent'
-				}),
-		  
-				// minimum size
-				interact.modifiers.restrictSize({
-				  min: { width: 50, height: 50 }
+				  ],
+			  
+				  inertia: true
 				})
-			  ],
-		  
-			  inertia: true
-			})
+				document.querySelectorAll('div[data-path]').forEach(function (e) {
+					const f = files.find((f) => {
+						return f.webViewUri.path === e.dataset.path
+					})
+					fetch(f.webViewUriString).then((response) => {
+						return response.text();
+					}).then((text) => {
+						const parser = new DOMParser()
+						const doc = parser.parseFromString(text, 'text/xml')
+						const svg = doc.getElementsByTagName('svg')[0];
+						
+						// width, heightが指定されていると、resizeできなくなるので、widthとheightを削除
+						svg.style.width = ''
+						svg.style.height = ''
+
+						// width, heightが指定されていると、resizeできなくなるので、widthとheightを100%にする
+						svg.setAttribute('width', '100%')
+						svg.setAttribute('height', '100%')
+
+						// svgにobject-fitを効かせる https://stackoverflow.com/a/43367943
+						svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+						e.appendChild(svg)
+					})
+				})
+			}, [])
+			return e('div',
+				{className: "container"},
+				e(
+					'div',
+					{},
+					e('button',
+					{},
+					'ボタン')
+				),
+				e(
+				  	'div',
+					{className: "container"},
+					files.map((f) => {
+						return e(
+							'div',
+							{key: f.webViewUri.path,'data-path': f.webViewUri.path, className: "resize-drag"},
+						)
+					})
+				)
+			)
 		}
+		const domContainer = document.querySelector('#root');
+		const root = ReactDOM.createRoot(domContainer);
+		root.render(e(Outer));
 		</script>
+		` + `
 		<style>
 		html {
 			min-height: 100vh;
@@ -208,6 +283,7 @@ export function activate(context: vscode.ExtensionContext) {
 			height: auto;
 		}
 		body {
+			padding: 0;
 			position: relative;
 			min-height: 100vh;
 			min-width: 100vw;
@@ -217,12 +293,22 @@ export function activate(context: vscode.ExtensionContext) {
 		div {
 			margin: 0;
 		}
+		#root {
+			min-height: 100vh;
+			min-width: 100vw;
+			width: auto;
+			height: auto;
+		}
+		.container {
+			min-height: 100vh;
+			min-width: 100vw;
+			width: auto;
+			height: auto;
+		}
 		.resize-drag {
 			position: absolute;
 			width: 120px;
 			border-radius: 8px;
-			// background-color: #29e;
-			// color: white;
 			font-size: 20px;
 			font-family: sans-serif;
 			
@@ -232,6 +318,18 @@ export function activate(context: vscode.ExtensionContext) {
 			/* This makes things *much* easier */
 			box-sizing: border-box;
 		  }
+		.header-menu {
+			display:flex;
+			width:100%;
+			height:50px;
+			background:white;
+			border:1px solid #e0e0e0;
+		}
+		.header-menu-item {
+			flex:1;
+			color: #333;
+			border-radius: 8px;
+		}
 		</style>
 		`
 	}))

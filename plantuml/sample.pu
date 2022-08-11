@@ -1,0 +1,8 @@
+@startuml
+
+"Visual Studio Code" -> "PlantUML Extension" : プレビュー命令
+"PlantUML Extension" -> "PlantUMLServer (on Docker)" : レンダリングリクエスト
+"PlantUMLServer (on Docker)" -> "PlantUML Extension" : 画像データレスポンス
+"PlantUML Extension" -> "Visual Studio Code" : プレビュー画像をレンダリング∂
+
+@enduml
